@@ -5,6 +5,7 @@
 // test-framework dependency of its own -- a caller wraps each check in its
 // own `it()`.
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { assertInert, type Inert, type InertRecord, type Mind, type Proposal } from "../types.js";
 
 export interface PassReport {
@@ -14,8 +15,6 @@ export interface PassReport {
   after: Inert;
   /** Audited write-path events the pass produced (the caller counts them). */
   resolutions: number;
-  /** When privateAct was requested: the token the planted act carried. */
-  privateMarker?: string;
 }
 
 export interface SeamHarness<C extends InertRecord, P extends Proposal> {
@@ -27,7 +26,16 @@ export interface SeamHarness<C extends InertRecord, P extends Proposal> {
   actionableProposal?: P;
   /** A caller must say, with a reason, if it cannot plant a private act. */
   privateAct: "supported" | { unsupported: string };
-  pass(mind: Mind<C, P>, options?: { privateAct?: "shown" | "withheld" }): Promise<PassReport>;
+  /**
+   * When `privateAct` is requested, the suite supplies the marker to plant --
+   * the harness must not invent its own. The same marker is passed to both
+   * the "shown" and "withheld" passes (check 4), so the withheld search is
+   * for the exact token the shown pass proved reachable, never a stale one.
+   */
+  pass(
+    mind: Mind<C, P>,
+    options?: { privateAct?: { visibility: "shown" | "withheld"; marker: string } }
+  ): Promise<PassReport>;
   /** How this caller constructs its real mind. */
   wire?: {
     create(o: { baseUrl: string; model: string; fetchFn: typeof fetch }): Mind<C, P>;
@@ -167,7 +175,7 @@ export function seamConformance<C extends InertRecord, P extends Proposal>(
 
   async function runPass(
     mind: Mind<C, P>,
-    options?: { privateAct?: "shown" | "withheld" }
+    options?: { privateAct?: { visibility: "shown" | "withheld"; marker: string } }
   ): Promise<PassReport> {
     const report = await harness.pass(mind, options);
     recorded.push(report);
@@ -217,16 +225,15 @@ export function seamConformance<C extends InertRecord, P extends Proposal>(
           return;
         }
 
+        // The suite mints the marker and hands the SAME one to both passes --
+        // the harness never invents its own -- so the "withheld" search below
+        // is for the exact token "shown" proved reachable, not a stale one.
+        const marker = randomUUID();
+
         let shownContext: C | undefined;
-        const shownReport = await runPass(
-          capturingMind<C, P>((ctx) => (shownContext = ctx)),
-          { privateAct: "shown" }
-        );
-        assert.ok(
-          shownReport.privateMarker,
-          "a harness declaring privateAct: 'supported' must return a privateMarker on the 'shown' pass"
-        );
-        const marker = shownReport.privateMarker as string;
+        await runPass(capturingMind<C, P>((ctx) => (shownContext = ctx)), {
+          privateAct: { visibility: "shown", marker },
+        });
         assert.ok(
           containsStringLeaf(shownContext as Inert, marker),
           "vacuous: the planted act never reached this caller's context by any route on the 'shown' " +
@@ -235,7 +242,7 @@ export function seamConformance<C extends InertRecord, P extends Proposal>(
 
         let withheldContext: C | undefined;
         await runPass(capturingMind<C, P>((ctx) => (withheldContext = ctx)), {
-          privateAct: "withheld",
+          privateAct: { visibility: "withheld", marker },
         });
         assert.ok(
           !containsStringLeaf(withheldContext as Inert, marker),

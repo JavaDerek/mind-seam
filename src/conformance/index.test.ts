@@ -16,6 +16,7 @@ import {
   makeActsOnProseViolation,
   makeCredentialLeakViolation,
   makeVacuousPrivateActViolation,
+  makeLeakingPrivateActViolation,
 } from "./__tests__/referenceHarness.js";
 
 async function runAll(checks: readonly { name: string; run(): Promise<void> }[]): Promise<void> {
@@ -117,5 +118,15 @@ describe("seamConformance — planted violation: context never renders the plant
       (c) => c.name === "the other principal's private act is absent, and demonstrably would have shown"
     )!;
     await expect(check4.run()).rejects.toThrow(/vacuous/);
+  });
+});
+
+describe("seamConformance — planted violation: a leaking harness (withheld still shows the act)", () => {
+  it("fails check 4, naming the leak", async () => {
+    const checks = seamConformance(makeLeakingPrivateActViolation());
+    const check4 = checks.find(
+      (c) => c.name === "the other principal's private act is absent, and demonstrably would have shown"
+    )!;
+    await expect(check4.run()).rejects.toThrow(/leak/);
   });
 });

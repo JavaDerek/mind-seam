@@ -1,13 +1,12 @@
 // A reference harness the package's own tests run seamConformance() against
 // (DESIGN §9.2): a toy world with one bounded counter and a one-function
-// referee, no run-dmcp. Plus four planted violations, each differing from
+// referee, no run-dmcp. Plus five planted violations, each differing from
 // the reference in exactly one place, used to prove every check goes red for
 // the right reason before it is trusted.
 //
 // Not part of the public API -- this lives under __tests__/ and is excluded
 // from the published package by package.json's `files` globs, same as
 // run-dmcp's own dist exclusions.
-import { randomUUID } from "node:crypto";
 import type { InertRecord, Mind, Proposal } from "../../types.js";
 import { createLocalMind, coerceProposal } from "../../wire/localMind.js";
 import type { PassReport, SeamHarness } from "../index.js";
@@ -47,19 +46,15 @@ export function makeReferenceHarness(): SeamHarness<CounterContext, CounterPropo
       const world = { count: 0 };
       const before = { count: world.count };
 
-      let privateMarker: string | undefined;
-      if (options?.privateAct === "shown") {
-        privateMarker = `marker-${randomUUID()}`;
-      }
-      const briefing =
-        options?.privateAct === "shown" ? briefingFor(world.count, privateMarker) : briefingFor(world.count, undefined);
+      const marker = options?.privateAct?.visibility === "shown" ? options.privateAct.marker : undefined;
+      const briefing = briefingFor(world.count, marker);
 
       const context: CounterContext = { briefing };
       const proposal = await mind.consider(context);
       const resolutions = resolveIfIncrement(world, proposal);
 
       const after = { count: world.count };
-      return { before, after, resolutions, privateMarker };
+      return { before, after, resolutions };
     },
     wire: {
       create(o): Mind<CounterContext, CounterProposal> {
@@ -116,10 +111,8 @@ export function makeActsOnProseViolation(): SeamHarness<CounterContext, CounterP
     async pass(mind, options): Promise<PassReport> {
       const world = { count: 0 };
       const before = { count: world.count };
-      let privateMarker: string | undefined;
-      if (options?.privateAct === "shown") privateMarker = `marker-${randomUUID()}`;
-      const briefing =
-        options?.privateAct === "shown" ? briefingFor(world.count, privateMarker) : briefingFor(world.count, undefined);
+      const marker = options?.privateAct?.visibility === "shown" ? options.privateAct.marker : undefined;
+      const briefing = briefingFor(world.count, marker);
       const context: CounterContext = { briefing };
 
       const proposal = await mind.consider(context);
@@ -130,7 +123,7 @@ export function makeActsOnProseViolation(): SeamHarness<CounterContext, CounterP
       }
 
       const after = { count: world.count };
-      return { before, after, resolutions: 0, privateMarker };
+      return { before, after, resolutions: 0 };
     },
   };
 }
@@ -193,18 +186,46 @@ export function makeVacuousPrivateActViolation(): SeamHarness<CounterContext, Co
   const base = makeReferenceHarness();
   return {
     ...base,
-    async pass(mind, options): Promise<PassReport> {
+    async pass(mind, _options): Promise<PassReport> {
       const world = { count: 0 };
       const before = { count: world.count };
-      let privateMarker: string | undefined;
-      if (options?.privateAct === "shown") privateMarker = `marker-${randomUUID()}`;
       // THE BUG: briefing never includes the marker, even when "shown".
       const context: CounterContext = { briefing: briefingFor(world.count, undefined) };
 
       const proposal = await mind.consider(context);
       const resolutions = resolveIfIncrement(world, proposal);
       const after = { count: world.count };
-      return { before, after, resolutions, privateMarker };
+      return { before, after, resolutions };
+    },
+  };
+}
+
+/** Planted violation 5 (the defect this fix closes): a harness whose
+ * "withheld" pass renders the private act too -- a real leak to the captured
+ * principal. Before the fix, `pass` was never handed a marker to plant, so a
+ * harness naturally minted a fresh one on every call; check 4 took the
+ * marker from the "shown" `PassReport` and searched "withheld"'s context for
+ * *that* token, which "withheld" (having minted its own) never contained --
+ * so the search always missed and the check passed regardless of an actual
+ * leak. Now that the suite hands both passes the same marker, this harness's
+ * bug -- rendering it on "withheld" too, instead of only "shown" -- is
+ * exactly what the search catches. */
+export function makeLeakingPrivateActViolation(): SeamHarness<CounterContext, CounterProposal> {
+  const base = makeReferenceHarness();
+  return {
+    ...base,
+    async pass(mind, options): Promise<PassReport> {
+      const world = { count: 0 };
+      const before = { count: world.count };
+      // THE BUG: the marker is rendered whenever privateAct is requested at
+      // all -- "shown" or "withheld" alike -- instead of only on "shown".
+      const marker = options?.privateAct?.marker;
+      const context: CounterContext = { briefing: briefingFor(world.count, marker) };
+
+      const proposal = await mind.consider(context);
+      const resolutions = resolveIfIncrement(world, proposal);
+      const after = { count: world.count };
+      return { before, after, resolutions };
     },
   };
 }
