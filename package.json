@@ -1,6 +1,6 @@
 {
   "name": "mind-seam",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A mind is handed inert data assembled from its own principal's view, returns inert data, and has no path to storage, whatever backs it. Types, one wire, one executable conformance suite.",
   "license": "MIT",
   "author": "Derek Ferguson",
