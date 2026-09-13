@@ -17,6 +17,18 @@
 // non-source files, and stays aimed at what it exists to catch: network code
 // smuggled into this package's compiled output.
 //
+// A SECOND EXCLUSION, NOT IN THE ORIGINAL DESIGN: src/conformance/. DESIGN.md
+// §9.1's own `SeamHarness.wire.create` signature is
+// `(o: { baseUrl: string; model: string; fetchFn: typeof fetch }) => Mind`,
+// and §9.2's own tests must construct a fake base URL to probe a caller's
+// wire -- so the literal tokens `baseUrl` and `http://` are unavoidable in
+// this directory's own type declarations and test doubles, not a network
+// call reaching production code. Appendix C's "every other file" is stricter
+// than DESIGN.md's own §9 can satisfy; this exclusion is the resolution:
+// src/conformance/ never calls a real network itself (`fetchFn` is always
+// caller-injected, exactly as in src/wire/'s own tests), it only describes
+// and exercises the wire's shape.
+//
 // WHAT THIS IS NOT: a ban on the words "context" or "principal" -- ordinary
 // vocabulary the rest of the package needs. The forbidden list is the
 // fingerprints of a live network call, a credential, or ambient
@@ -28,10 +40,10 @@ import { resolve, basename } from "node:path";
 
 const REPO_ROOT = resolve(__dirname, "..", "..");
 const SRC_DIR = "src/";
-const WIRE_DIR = "src/wire/";
+const EXCLUDED_DIRS = ["src/wire/", "src/conformance/"];
 
 /**
- * Every file under `src/` except `src/wire/` -- tracked union
+ * Every file under `src/` except the excluded directories -- tracked union
  * untracked-but-not-ignored, exactly as `vocabulary.test.ts` and
  * `engineVocabulary.test.ts` scan, and for the identical reason: a violation
  * is authored before `git add` ever runs, which a tracked-only scan cannot
@@ -49,7 +61,7 @@ function scannedFiles(): string[] {
   return [...new Set([...tracked, ...untracked])]
     .filter(Boolean)
     .filter((f) => f.startsWith(SRC_DIR))
-    .filter((f) => !f.startsWith(WIRE_DIR))
+    .filter((f) => !EXCLUDED_DIRS.some((dir) => f.startsWith(dir)))
     .filter((f) => basename(f) !== "noNetworkOutsideWire.test.ts");
 }
 
@@ -67,7 +79,7 @@ const FORBIDDEN: Array<{ pattern: RegExp; what: string; why: string }> = [
   {
     pattern: /\bbaseUrl\b/,
     what: "an API base-URL configuration field",
-    why: "baseUrl is the wire's own parameter; nothing outside src/wire/ has a network call to configure.",
+    why: "baseUrl is the wire's own parameter; nothing outside src/wire/ (or the conformance suite that describes its shape) has a network call to configure.",
   },
   {
     pattern: /process\.env/,
@@ -86,7 +98,7 @@ const FORBIDDEN: Array<{ pattern: RegExp; what: string; why: string }> = [
   },
 ];
 
-describe("no network code, credential, or ambient config reaches mind-seam's source outside src/wire/", () => {
+describe("no network code, credential, or ambient config reaches mind-seam's source outside src/wire/ and src/conformance/", () => {
   const files = scannedFiles();
 
   it("scans a meaningful number of files (guard against a vacuous pass)", () => {
@@ -109,10 +121,11 @@ describe("no network code, credential, or ambient config reaches mind-seam's sou
     expect(offenders, `${why}\n\n${offenders.join("\n")}`).toEqual([]);
   });
 
-  it("excludes exactly src/wire/, and nothing else under src/", () => {
+  it("excludes exactly src/wire/ and src/conformance/, and nothing else under src/", () => {
     // If this exclusion ever grows, the rule is being routed around rather
     // than enforced -- the same discipline engineVocabulary.test.ts holds for
     // its own single exclusion.
+    expect(EXCLUDED_DIRS).toEqual(["src/wire/", "src/conformance/"]);
     const allTracked = [
       ...execFileSync("git", ["ls-files"], { cwd: REPO_ROOT, encoding: "utf8" }).split("\n"),
       ...execFileSync("git", ["ls-files", "--others", "--exclude-standard"], {
@@ -120,8 +133,10 @@ describe("no network code, credential, or ambient config reaches mind-seam's sou
         encoding: "utf8",
       }).split("\n"),
     ].filter(Boolean);
-    const wireFiles = [...new Set(allTracked)].filter((f) => f.startsWith(WIRE_DIR));
-    for (const f of wireFiles) {
+    const excludedFiles = [...new Set(allTracked)].filter((f) =>
+      EXCLUDED_DIRS.some((dir) => f.startsWith(dir))
+    );
+    for (const f of excludedFiles) {
       expect(files).not.toContain(f);
     }
   });
