@@ -23,8 +23,20 @@ no release attached to this package.
 `createLocalMind()` dials a local OpenAI-compatible `/chat/completions` endpoint with `tools: []`,
 `stream: false`, and no credential of any kind. Every failure — unreachable, timeout, a non-200
 status, an unparseable body, a `coerce` that returns `null` — returns `null` after calling
-`onSilence(reason, context)` with one of a closed set of reasons. A hostname is configuration: the
-endpoint's location is a required parameter, never a default this package assumes.
+`onSilence(reason, context, detail?)` with one of a closed set of reasons. A hostname is
+configuration: the endpoint's location is a required parameter, never a default this package
+assumes.
+
+`responseFormat: "json"` is opt-in: it adds `response_format: { type: "json_object" }` to the request
+body, for an endpoint that supports constraining generation to a JSON object. Left unset, the body is
+byte-for-byte what it always was — this is additive, not a default change.
+
+`onSilence`'s third argument, `detail?: { text?: string; parsed?: Inert }`, carries what there is to
+say for `"unparseable"` and `"rejected"`: `text` is the closest thing to the model's raw answer at the
+point of failure (the extracted message content once that much parsed, the raw HTTP body if not), and
+`parsed` is the JSON value pulled out of it, present only when parsing succeeded and `coerce` is what
+rejected it. `"unreachable"`, `"timeout"`, and `"status"` pass no third argument at all, so an
+existing two-argument `onSilence` keeps working unchanged.
 
 ## The property, and how it is enforced
 

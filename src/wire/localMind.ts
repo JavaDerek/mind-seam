@@ -1,9 +1,26 @@
 // The wire: the seam's one piece of behaviour (DESIGN §7.3). A POST to an
 // OpenAI-compatible endpoint with `tools: []`, no credential of any kind, and
 // every failure returned as `null` with a reason -- never thrown, never hung.
-import { assertInert, type InertRecord, type Mind, type Proposal } from "../types.js";
+import { assertInert, type Inert, type InertRecord, type Mind, type Proposal } from "../types.js";
 
 export type SilenceReason = "unreachable" | "timeout" | "status" | "unparseable" | "rejected";
+
+/**
+ * What went past silence, when there is anything to say. `text` is the
+ * closest thing to "what the model actually sent" available at the point of
+ * failure -- the extracted `message.content` once that much parsed, or the
+ * raw HTTP body when even that failed. `parsed` is the JSON value
+ * `firstJsonObject` pulled out of `text`, present only when parsing got that
+ * far and `coerce` is what rejected it (reason `"rejected"`). Neither field
+ * applies to `"unreachable"`, `"timeout"`, or `"status"` -- those pass no
+ * detail at all, so an existing two-argument `onSilence` keeps working
+ * unchanged. `parsed` is always `Inert`: it comes straight out of
+ * `JSON.parse`, which never produces a function, a symbol, or a getter.
+ */
+export interface SilenceDetail {
+  text?: string;
+  parsed?: Inert;
+}
 
 export interface CreateLocalMindOptions<C extends InertRecord, P extends Proposal> {
   /** Required: the package knows nobody's box. A hostname is configuration. */
@@ -17,9 +34,16 @@ export interface CreateLocalMindOptions<C extends InertRecord, P extends Proposa
   temperature?: number;
   /** Default 12_000ms — a slow box costs an opinion, never the turn. */
   timeoutMs?: number;
+  /**
+   * Opt-in: `"json"` sends `response_format: { type: "json_object" }`, which
+   * an OpenAI-compatible endpoint uses to constrain generation to a JSON
+   * object instead of leaving JSON-or-prose to the model's own habits.
+   * Omitted, the request body is byte-for-byte what it always was.
+   */
+  responseFormat?: "json";
   /** Injectable, so every test runs offline. */
   fetchFn?: typeof fetch;
-  onSilence?: (reason: SilenceReason, context: C) => void;
+  onSilence?: (reason: SilenceReason, context: C, detail?: SilenceDetail) => void;
 }
 
 const DEFAULT_TEMPERATURE = 0.9;
@@ -43,6 +67,7 @@ export function createLocalMind<C extends InertRecord, P extends Proposal>(
     coerce,
     temperature = DEFAULT_TEMPERATURE,
     timeoutMs = DEFAULT_TIMEOUT_MS,
+    responseFormat,
     fetchFn = fetch,
     onSilence,
   } = options;
@@ -51,8 +76,14 @@ export function createLocalMind<C extends InertRecord, P extends Proposal>(
     async consider(context: C): Promise<P | null> {
       assertInert(context, "context");
 
-      const silence = (reason: SilenceReason): null => {
-        onSilence?.(reason, context);
+      // No `detail` argument at all for a reason that has none -- keeps a
+      // caller's existing two-argument onSilence working unchanged.
+      const silence = (reason: SilenceReason, detail?: SilenceDetail): null => {
+        if (detail === undefined) {
+          onSilence?.(reason, context);
+        } else {
+          onSilence?.(reason, context, detail);
+        }
         return null;
       };
 
@@ -67,6 +98,7 @@ export function createLocalMind<C extends InertRecord, P extends Proposal>(
             tools: [],
             temperature,
             stream: false,
+            ...(responseFormat === "json" ? { response_format: { type: "json_object" } } : {}),
           }),
           signal: AbortSignal.timeout(timeoutMs),
         });
@@ -84,24 +116,24 @@ export function createLocalMind<C extends InertRecord, P extends Proposal>(
       try {
         body = JSON.parse(bodyText);
       } catch {
-        return silence("unparseable");
+        return silence("unparseable", { text: bodyText });
       }
 
       const content = (
         body as { choices?: Array<{ message?: { content?: unknown } }> } | null
       )?.choices?.[0]?.message?.content;
       if (typeof content !== "string") {
-        return silence("unparseable");
+        return silence("unparseable", { text: bodyText });
       }
 
       const raw = firstJsonObject(content);
       if (raw === null) {
-        return silence("unparseable");
+        return silence("unparseable", { text: content });
       }
 
       const proposal = coerce(raw, context);
       if (proposal === null) {
-        return silence("rejected");
+        return silence("rejected", { text: content, parsed: raw as Inert });
       }
       return proposal;
     },

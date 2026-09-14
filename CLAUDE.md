@@ -43,9 +43,12 @@ No default base URL — a hostname is configuration.
 
 ## Failure is silence with a reason
 
-Every wire failure returns `null` after calling `onSilence(reason)` with a member of the closed
-`SilenceReason` set. What repeated silence *means* is the caller's; do not add a counter or a
-threshold here.
+Every wire failure returns `null` after calling `onSilence(reason, context, detail?)` with a member
+of the closed `SilenceReason` set. `detail` (`{ text?: string; parsed?: Inert }`) is present only for
+`"unparseable"` and `"rejected"` — the other three reasons pass no third argument at all, so an
+existing two-argument callback keeps working. `parsed` is always `Inert` (it comes straight out of
+`JSON.parse`). What repeated silence *means* is the caller's; do not add a counter or a threshold
+here.
 
 ## The conformance suite is the product
 

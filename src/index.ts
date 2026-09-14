@@ -5,5 +5,5 @@
 export type { Inert, InertRecord, Proposal, Mind } from "./types.js";
 export { assertInert } from "./types.js";
 export { SILENT_MIND, scriptedMind } from "./minds.js";
-export type { SilenceReason } from "./wire/localMind.js";
+export type { SilenceReason, SilenceDetail } from "./wire/localMind.js";
 export { createLocalMind, coerceProposal, firstJsonObject } from "./wire/localMind.js";

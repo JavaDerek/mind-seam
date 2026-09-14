@@ -7,8 +7,9 @@ import {
   coerceProposal,
   firstJsonObject,
   type SilenceReason,
+  type SilenceDetail,
 } from "./localMind.js";
-import type { InertRecord, Proposal } from "../types.js";
+import { assertInert, type InertRecord, type Proposal } from "../types.js";
 
 type Ctx = InertRecord & { briefing: string };
 
@@ -133,6 +134,45 @@ describe("createLocalMind — the request", () => {
     });
     await mind2.consider({ briefing: "hello" });
     expect(body2().temperature).toBe(0.2);
+  });
+});
+
+describe("createLocalMind — responseFormat (opt-in JSON mode)", () => {
+  it("sends a body byte-for-byte identical to today's when responseFormat is not set", async () => {
+    const { fetchFn, init } = capturingFetch(jsonResponse(JSON.stringify({ intent: "x" })));
+    const mind = createLocalMind<Ctx, Proposal>({
+      baseUrl: "http://endpoint/v1",
+      model: "m",
+      prompt: (c) => c.briefing,
+      coerce: identityCoerce,
+      fetchFn,
+    });
+
+    await mind.consider({ briefing: "hello" });
+    expect(init().body).toBe(
+      JSON.stringify({
+        model: "m",
+        messages: [{ role: "user", content: "hello" }],
+        tools: [],
+        temperature: 0.9,
+        stream: false,
+      })
+    );
+  });
+
+  it("sends response_format: { type: 'json_object' } when responseFormat: 'json' is set", async () => {
+    const { fetchFn, body } = capturingFetch(jsonResponse(JSON.stringify({ intent: "x" })));
+    const mind = createLocalMind<Ctx, Proposal>({
+      baseUrl: "http://endpoint/v1",
+      model: "m",
+      prompt: (c) => c.briefing,
+      coerce: identityCoerce,
+      responseFormat: "json",
+      fetchFn,
+    });
+
+    await mind.consider({ briefing: "hello" });
+    expect(body().response_format).toEqual({ type: "json_object" });
   });
 });
 
@@ -327,6 +367,159 @@ describe("createLocalMind — every failure is null, with a reason", () => {
     });
 
     await expect(mind.consider({ briefing: "hello" })).resolves.toBeNull();
+  });
+});
+
+describe("createLocalMind — onSilence's detail argument", () => {
+  it("omits the detail argument entirely for unreachable, timeout, and status", async () => {
+    const calls: unknown[][] = [];
+    const onSilence = vi.fn((...args: unknown[]) => calls.push(args));
+
+    const unreachable = vi.fn(async () => {
+      throw new Error("ECONNREFUSED");
+    }) as unknown as typeof fetch;
+    await createLocalMind<Ctx, Proposal>({
+      baseUrl: "http://endpoint/v1",
+      model: "m",
+      prompt: (c) => c.briefing,
+      coerce: identityCoerce,
+      fetchFn: unreachable,
+      onSilence,
+    }).consider({ briefing: "hello" });
+
+    const timeout = vi.fn(async () => {
+      throw new DOMException("timed out", "TimeoutError");
+    }) as unknown as typeof fetch;
+    await createLocalMind<Ctx, Proposal>({
+      baseUrl: "http://endpoint/v1",
+      model: "m",
+      prompt: (c) => c.briefing,
+      coerce: identityCoerce,
+      fetchFn: timeout,
+      onSilence,
+    }).consider({ briefing: "hello" });
+
+    const status = vi.fn(async () => new Response("nope", { status: 503 })) as unknown as typeof fetch;
+    await createLocalMind<Ctx, Proposal>({
+      baseUrl: "http://endpoint/v1",
+      model: "m",
+      prompt: (c) => c.briefing,
+      coerce: identityCoerce,
+      fetchFn: status,
+      onSilence,
+    }).consider({ briefing: "hello" });
+
+    expect(calls).toEqual([
+      ["unreachable", { briefing: "hello" }],
+      ["timeout", { briefing: "hello" }],
+      ["status", { briefing: "hello" }],
+    ]);
+  });
+
+  it("passes detail.text = the raw response body when the outer body is not JSON at all", async () => {
+    const details: (SilenceDetail | undefined)[] = [];
+    const fetchFn = vi.fn(async () => new Response("not json at all", { status: 200 })) as unknown as typeof fetch;
+    const mind = createLocalMind<Ctx, Proposal>({
+      baseUrl: "http://endpoint/v1",
+      model: "m",
+      prompt: (c) => c.briefing,
+      coerce: identityCoerce,
+      fetchFn,
+      onSilence: (_reason, _context, detail) => details.push(detail),
+    });
+
+    await mind.consider({ briefing: "hello" });
+    expect(details).toEqual([{ text: "not json at all" }]);
+  });
+
+  it("passes detail.text = the raw response body when choices[0].message.content is missing", async () => {
+    const details: (SilenceDetail | undefined)[] = [];
+    const rawBody = JSON.stringify({ choices: [{ message: {} }] });
+    const fetchFn = vi.fn(
+      async () => new Response(rawBody, { status: 200 })
+    ) as unknown as typeof fetch;
+    const mind = createLocalMind<Ctx, Proposal>({
+      baseUrl: "http://endpoint/v1",
+      model: "m",
+      prompt: (c) => c.briefing,
+      coerce: identityCoerce,
+      fetchFn,
+      onSilence: (_reason, _context, detail) => details.push(detail),
+    });
+
+    await mind.consider({ briefing: "hello" });
+    expect(details).toEqual([{ text: rawBody }]);
+  });
+
+  it("passes detail.text = the model's message content when it has no JSON object inside", async () => {
+    const details: (SilenceDetail | undefined)[] = [];
+    const fetchFn = vi.fn(
+      async () => jsonResponse("just talking, no object here")
+    ) as unknown as typeof fetch;
+    const mind = createLocalMind<Ctx, Proposal>({
+      baseUrl: "http://endpoint/v1",
+      model: "m",
+      prompt: (c) => c.briefing,
+      coerce: identityCoerce,
+      fetchFn,
+      onSilence: (_reason, _context, detail) => details.push(detail),
+    });
+
+    await mind.consider({ briefing: "hello" });
+    expect(details).toEqual([{ text: "just talking, no object here" }]);
+  });
+
+  it("passes detail.text and detail.parsed when coerce rejects the parsed object (reason: rejected)", async () => {
+    const details: (SilenceDetail | undefined)[] = [];
+    const { fetchFn } = capturingFetch(jsonResponse(JSON.stringify({ nothing: "usable" })));
+    const mind = createLocalMind<Ctx, Proposal>({
+      baseUrl: "http://endpoint/v1",
+      model: "m",
+      prompt: (c) => c.briefing,
+      coerce: identityCoerce,
+      fetchFn,
+      onSilence: (_reason, _context, detail) => details.push(detail),
+    });
+
+    await mind.consider({ briefing: "hello" });
+    expect(details).toEqual([
+      { text: JSON.stringify({ nothing: "usable" }), parsed: { nothing: "usable" } },
+    ]);
+  });
+
+  it("detail.parsed is Inert", async () => {
+    let parsed: unknown;
+    const { fetchFn } = capturingFetch(jsonResponse(JSON.stringify({ nothing: "usable" })));
+    const mind = createLocalMind<Ctx, Proposal>({
+      baseUrl: "http://endpoint/v1",
+      model: "m",
+      prompt: (c) => c.briefing,
+      coerce: identityCoerce,
+      fetchFn,
+      onSilence: (_reason, _context, detail) => (parsed = detail?.parsed),
+    });
+
+    await mind.consider({ briefing: "hello" });
+    expect(() => assertInert(parsed, "detail.parsed")).not.toThrow();
+  });
+
+  it("existing two-argument onSilence callbacks keep working", async () => {
+    const reasons: SilenceReason[] = [];
+    const fetchFn = vi.fn(async () => new Response("nope", { status: 500 })) as unknown as typeof fetch;
+    const mind = createLocalMind<Ctx, Proposal>({
+      baseUrl: "http://endpoint/v1",
+      model: "m",
+      prompt: (c) => c.briefing,
+      coerce: identityCoerce,
+      fetchFn,
+      onSilence: (reason, context) => {
+        reasons.push(reason);
+        expect(context).toEqual({ briefing: "hello" });
+      },
+    });
+
+    await mind.consider({ briefing: "hello" });
+    expect(reasons).toEqual(["status"]);
   });
 });
 
