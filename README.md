@@ -27,9 +27,16 @@ status, an unparseable body, a `coerce` that returns `null` — returns `null` a
 configuration: the endpoint's location is a required parameter, never a default this package
 assumes.
 
-`responseFormat: "json"` is opt-in: it adds `response_format: { type: "json_object" }` to the request
-body, for an endpoint that supports constraining generation to a JSON object. Left unset, the body is
-byte-for-byte what it always was — this is additive, not a default change.
+`responseFormat` is opt-in. `"json"` adds `response_format: { type: "json_object" }` to the request
+body, for an endpoint that supports constraining generation to a JSON object. `{ jsonSchema, name? }`
+goes further — `response_format: { type: "json_schema", json_schema: { name: name ?? "proposal",
+strict: true, schema: jsonSchema } }` — and against Ollama 0.30.10 held a model to a schema's exact
+keys and enum values even when the prompt asked for different ones, where `"json"` alone still let it
+invent keys. `jsonSchema` is asserted `Inert` when `createLocalMind` is called, the same way a
+non-inert context throws; this is a request to the server, not a guarantee, so `coerce` still runs on
+every answer regardless of which `responseFormat` was asked for — schema enforcement is defense in
+depth, not a replacement for it. Left unset, the body is byte-for-byte what it always was — this is
+additive, not a default change.
 
 `onSilence`'s third argument, `detail?: { text?: string; parsed?: Inert }`, carries what there is to
 say for `"unparseable"` and `"rejected"`: `text` is the closest thing to the model's raw answer at the

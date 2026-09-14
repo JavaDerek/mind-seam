@@ -50,6 +50,17 @@ existing two-argument callback keeps working. `parsed` is always `Inert` (it com
 `JSON.parse`). What repeated silence *means* is the caller's; do not add a counter or a threshold
 here.
 
+## Schema enforcement narrows the model, it does not replace `coerce`
+
+`createLocalMind`'s `responseFormat` is opt-in: `"json"` sends `{ type: "json_object" }`;
+`{ jsonSchema, name? }` sends `{ type: "json_schema", json_schema: { name, strict: true, schema:
+jsonSchema } }`. Against Ollama 0.30.10, `strict: true` with a schema held a model to the schema's
+exact keys and enum values even when the prompt asked for different ones; plain `json_object` still
+let it invent keys. `jsonSchema` is asserted `Inert` when the mind is constructed, the same as a
+non-inert context throws from `consider()`. This is a request to the server, not a guarantee from
+it — `coerce` still runs on every answer no matter which `responseFormat` was asked for. Do not treat
+a schema as a reason to weaken a caller's own `coerce`.
+
 ## The conformance suite is the product
 
 `mind-seam/conformance` asserts with `node:assert/strict` and depends on no test framework. Every

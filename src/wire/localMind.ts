@@ -35,12 +35,24 @@ export interface CreateLocalMindOptions<C extends InertRecord, P extends Proposa
   /** Default 12_000ms — a slow box costs an opinion, never the turn. */
   timeoutMs?: number;
   /**
-   * Opt-in: `"json"` sends `response_format: { type: "json_object" }`, which
-   * an OpenAI-compatible endpoint uses to constrain generation to a JSON
-   * object instead of leaving JSON-or-prose to the model's own habits.
+   * Opt-in. `"json"` sends `response_format: { type: "json_object" }`,
+   * which an OpenAI-compatible endpoint uses to constrain generation to a
+   * JSON object instead of leaving JSON-or-prose to the model's own habits.
+   *
+   * `{ jsonSchema, name? }` goes further: `response_format: { type:
+   * "json_schema", json_schema: { name: name ?? "proposal", strict: true,
+   * schema: jsonSchema } }`. Against Ollama 0.30.10, `strict: true` with a
+   * schema held a model to the schema's exact keys and enum values even
+   * when the prompt asked for different ones -- `"json"` alone still let it
+   * invent keys. `jsonSchema` is asserted `Inert` when `createLocalMind` is
+   * called (a non-inert schema is a programming error, like a non-inert
+   * context); this is a request to the server, not a guarantee from it, so
+   * `coerce` still runs on every answer -- schema enforcement narrows what
+   * usually arrives, it does not replace the caller's own check of what did.
+   *
    * Omitted, the request body is byte-for-byte what it always was.
    */
-  responseFormat?: "json";
+  responseFormat?: "json" | { jsonSchema: InertRecord; name?: string };
   /** Injectable, so every test runs offline. */
   fetchFn?: typeof fetch;
   onSilence?: (reason: SilenceReason, context: C, detail?: SilenceDetail) => void;
@@ -72,6 +84,13 @@ export function createLocalMind<C extends InertRecord, P extends Proposal>(
     onSilence,
   } = options;
 
+  // Construction-time, not consider()-time: a non-inert schema is caught
+  // once, the moment the mind is built, exactly like assertInert(context)
+  // catches a non-inert context on every consider() call.
+  if (typeof responseFormat === "object") {
+    assertInert(responseFormat.jsonSchema, "responseFormat.jsonSchema");
+  }
+
   return {
     async consider(context: C): Promise<P | null> {
       assertInert(context, "context");
@@ -98,7 +117,7 @@ export function createLocalMind<C extends InertRecord, P extends Proposal>(
             tools: [],
             temperature,
             stream: false,
-            ...(responseFormat === "json" ? { response_format: { type: "json_object" } } : {}),
+            ...(responseFormat === undefined ? {} : { response_format: responseFormatBody(responseFormat) }),
           }),
           signal: AbortSignal.timeout(timeoutMs),
         });
@@ -142,6 +161,22 @@ export function createLocalMind<C extends InertRecord, P extends Proposal>(
 
 function isTimeoutError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "TimeoutError";
+}
+
+function responseFormatBody(
+  responseFormat: "json" | { jsonSchema: InertRecord; name?: string }
+): Inert {
+  if (responseFormat === "json") {
+    return { type: "json_object" };
+  }
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: responseFormat.name ?? "proposal",
+      strict: true,
+      schema: responseFormat.jsonSchema,
+    },
+  };
 }
 
 /**

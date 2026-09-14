@@ -174,6 +174,87 @@ describe("createLocalMind — responseFormat (opt-in JSON mode)", () => {
     await mind.consider({ briefing: "hello" });
     expect(body().response_format).toEqual({ type: "json_object" });
   });
+
+  it("sends a strict json_schema response_format, named 'proposal' by default", async () => {
+    const { fetchFn, body } = capturingFetch(jsonResponse(JSON.stringify({ intent: "x" })));
+    const schema = {
+      type: "object",
+      properties: { intent: { type: "string" } },
+      required: ["intent"],
+    };
+    const mind = createLocalMind<Ctx, Proposal>({
+      baseUrl: "http://endpoint/v1",
+      model: "m",
+      prompt: (c) => c.briefing,
+      coerce: identityCoerce,
+      responseFormat: { jsonSchema: schema },
+      fetchFn,
+    });
+
+    await mind.consider({ briefing: "hello" });
+    expect(body().response_format).toEqual({
+      type: "json_schema",
+      json_schema: { name: "proposal", strict: true, schema },
+    });
+  });
+
+  it("uses the caller-supplied name for the json_schema response_format", async () => {
+    const { fetchFn, body } = capturingFetch(jsonResponse(JSON.stringify({ intent: "x" })));
+    const schema = { type: "object", properties: {} };
+    const mind = createLocalMind<Ctx, Proposal>({
+      baseUrl: "http://endpoint/v1",
+      model: "m",
+      prompt: (c) => c.briefing,
+      coerce: identityCoerce,
+      responseFormat: { jsonSchema: schema, name: "rival_proposal" },
+      fetchFn,
+    });
+
+    await mind.consider({ briefing: "hello" });
+    expect(body().response_format).toEqual({
+      type: "json_schema",
+      json_schema: { name: "rival_proposal", strict: true, schema },
+    });
+  });
+
+  it("throws at construction when the schema is not inert, before any fetch", () => {
+    const fetchFn = vi.fn();
+    const notInert: Record<string, unknown> = { type: "object" };
+    Object.defineProperty(notInert, "properties", {
+      get: () => ({}),
+      enumerable: true,
+      configurable: true,
+    });
+
+    expect(() =>
+      createLocalMind<Ctx, Proposal>({
+        baseUrl: "http://endpoint/v1",
+        model: "m",
+        prompt: (c) => c.briefing,
+        coerce: identityCoerce,
+        responseFormat: { jsonSchema: notInert as InertRecord },
+        fetchFn: fetchFn as unknown as typeof fetch,
+      })
+    ).toThrow(/properties/);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("still runs coerce on the answer, and still rejects, when responseFormat requests a schema", async () => {
+    const reasons: SilenceReason[] = [];
+    const { fetchFn } = capturingFetch(jsonResponse(JSON.stringify({ nothing: "usable" })));
+    const mind = createLocalMind<Ctx, Proposal>({
+      baseUrl: "http://endpoint/v1",
+      model: "m",
+      prompt: (c) => c.briefing,
+      coerce: identityCoerce,
+      responseFormat: { jsonSchema: { type: "object" } },
+      fetchFn,
+      onSilence: (reason) => reasons.push(reason),
+    });
+
+    await expect(mind.consider({ briefing: "hello" })).resolves.toBeNull();
+    expect(reasons).toEqual(["rejected"]);
+  });
 });
 
 describe("createLocalMind — success", () => {
