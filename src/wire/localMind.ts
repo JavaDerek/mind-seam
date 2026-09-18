@@ -163,7 +163,7 @@ function isTimeoutError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "TimeoutError";
 }
 
-function responseFormatBody(
+export function responseFormatBody(
   responseFormat: "json" | { jsonSchema: InertRecord; name?: string }
 ): Inert {
   if (responseFormat === "json") {

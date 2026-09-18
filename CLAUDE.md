@@ -26,7 +26,22 @@ forbidden list stays to the distinctive tokens above, which carry the same evide
 ## Zero runtime dependencies, by test
 
 `dependencies` is `{}`, asserted by `src/__tests__/zeroDependencies.test.ts`. Never `run-dmcp`: that
-would hand every mind a path to storage by import. Never a vendor SDK: the wire is a `fetch`.
+would hand every mind a path to storage by import. Never a vendor SDK.
+
+**There are two wires now, and neither is an SDK.** `src/wire/httpProvider.ts` is a `fetch` to an
+OpenAI-compatible endpoint; `src/wire/cliProvider.ts` spawns a command and reads its stdout. Both are
+node builtins or the platform, so `dependencies` is still `{}`. The second one exists because a
+role's backend has to be swappable for the swap to be *evidence*: when a role misbehaves, moving it
+to a stronger backend and re-running separates "the model was too weak" from "the logic is wrong",
+and a caller cannot ask that question while the backend is welded to the call site.
+
+**The `cli` wire reads no environment and holds no credential denylist**, and the second is not a
+choice — the guard in this tree forbids that spelling outright, so the list of which variable names
+are dangerous *cannot* live here. It stays with the caller, which asserts their absence and passes
+the environment it vouches for. `env` is a required argument passed straight through, so a
+credential held by a parent process has no path to a child spawned here: inheritance is not
+defended against, it is unrepresentable. A caller whose flags would disable subscription auth is
+refused at construction.
 
 ## No context lives here
 
