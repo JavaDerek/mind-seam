@@ -1,5 +1,7 @@
 # mind-seam
 
+> **Archived 2026-10-31. Frozen.** Nothing here is maintained. The published `mind-seam@0.5.0` stays installable at that exact version for anything already pinned to it.
+
 A mind is handed inert data assembled from its own principal's view, returns inert data, and has no
 path to storage, whatever backs it. This package is that sentence as types, one wire, and one
 executable conformance suite that any caller runs to prove it holds there.
